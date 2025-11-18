@@ -47,8 +47,6 @@ add(){
         return 1
     fi
     
-    script_path=$(cd "$(dirname "$script_path")" && pwd)/$(basename "$script_path")
-    
     if [[ ! -f "$script_path" ]]; then
         log_error "Script not found: $script_path"
         return 1
