@@ -34,7 +34,6 @@ convert_time_period_to_cron() {
 }
 
 add(){
-    echo "add started"
     local script_path="$1"
     local time_period="$2"
     
@@ -53,6 +52,7 @@ add(){
         return 1
     fi
     
+    log_info "Starting to add cron job for script: $script_path"
     local cron_schedule=$(convert_time_period_to_cron "$time_period")
     local cron_entry="$cron_schedule $script_path # $(basename "$script_path")"
     
