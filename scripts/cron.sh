@@ -37,6 +37,7 @@ add(){
     local script_path="$1"
     local time_period="$2"
     
+    log_info "Script path: $script_path"
     if [[ -z "$script_path" ]]; then
         log_error "Script path is required"
         return 1
