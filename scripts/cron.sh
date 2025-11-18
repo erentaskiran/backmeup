@@ -34,6 +34,7 @@ convert_time_period_to_cron() {
 }
 
 add(){
+    echo "add started"
     local script_path="$1"
     local time_period="$2"
     
