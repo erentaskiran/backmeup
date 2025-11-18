@@ -10,7 +10,7 @@ print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts"
 
 show_usage() {
 cat << 'EOF'
@@ -22,25 +22,42 @@ cat << 'EOF'
 |____/ \__,_|\___|_|\_\_| |_| |_|\___| \__,_| .__/ 
                                             | |    
                                             |_|    
+BackMeUp - Automated Backup Solution
+
 Usage: backmeup <command> [options]
-Available commands:
-  backup    Start a backup process
-  delete    Delete an existing backup
-  update    Update backup settings
+
+Commands:
+  backup <start|update|delete|list>       Setup automated backup
+  help                                    Show this help message
+
+"backup start" Options:
+  -d, --directory <path>     Source directory to backup
+  -o, --output <path>        Backup destination directory
+  -t, --time-period <time>   Schedule (hourly/daily/weekly/monthly/cron)
+  -b, --backup-count <num>   Number of backups to keep (default: 5)
+  -i, --interactive          Interactive mode
+
+Examples:
+    backmeup backup start -i
+    backmeup backup start -d ~/Documents -o ~/Backups -t daily
+    backmeup backup start -d ~/Photos -o /backup -t "0 3 * * *" -b 10
 EOF
 }
-command(){
-    local command=$1
+
+handle_command(){
+    local cmd=$1
     shift
-    case $command in
+    case $cmd in
         "backup")
-            exec ${SCRIPT_DIR}/backup.sh "$command" "$@"
+            exec bash "${SCRIPT_DIR}/backup.sh" "$@"
             ;;
-        "help")
+        "help"|"-h"|"--help")
             show_usage
             ;;
         *)
-            echo "Unknown command: $1, use 'help' to see available commands."
+            echo "Unknown command: $cmd"
+            echo "Use 'backmeup help' to see available commands."
+            exit 1
             ;;
     esac
 }
@@ -50,9 +67,6 @@ main() {
         exit 0
     fi
 
-    local command="$1"
-    shift
-
-    command "$command" "$@"
+    handle_command "$@"
 }
 main "$@"
