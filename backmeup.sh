@@ -10,6 +10,8 @@ print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 show_usage() {
 cat << 'EOF'
  ____             _                 
@@ -32,7 +34,7 @@ command(){
     shift
     case $command in
         "backup")
-            exec /usr/local/bin/backup.sh "$command" "$@"
+            exec ${SCRIPT_DIR}/backup.sh "$command" "$@"
             ;;
         "help")
             show_usage
@@ -42,3 +44,15 @@ command(){
             ;;
     esac
 }
+main() {
+    if [ $# -eq 0 ]; then
+        show_usage
+        exit 0
+    fi
+
+    local command="$1"
+    shift
+
+    command "$command" "$@"
+}
+main "$@"
