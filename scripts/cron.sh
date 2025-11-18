@@ -47,12 +47,12 @@ add(){
         return 1
     fi
     
-    log_info "\nScript path: $script_path"
+    log_info "Original script path: $script_path"
     script_path=$(cd "$(dirname "$script_path")" 2>/dev/null && pwd)/$(basename "$script_path")
     
     log_info "Resolved script path: $script_path"
     if [[ ! -f "$script_path" ]]; then
-        log_error "\nScript not found: $script_path"
+        log_error "Script not found: $script_path"
         return 1
     fi
     log_info "Making script executable..."
@@ -63,8 +63,17 @@ add(){
     local cron_entry="$cron_schedule /usr/bin/env bash $script_path # $(basename "$script_path")"
     
     log_info "Adding cron job..."
+    log_info "Cron schedule: $cron_schedule"
+    log_info "Cron entry: $cron_entry"
     
     local current_crontab=$(crontab -l 2>/dev/null || echo "")
+    
+    log_info "Current crontab content:"
+    if [[ -z "$current_crontab" ]]; then
+        log_info "  (empty)"
+    else
+        echo "$current_crontab"
+    fi
     
     if echo "$current_crontab" | grep -q "$(basename "$script_path")"; then
         log_warning "A cron job for this backup already exists"
@@ -76,6 +85,7 @@ add(){
         current_crontab=$(echo "$current_crontab" | grep -v "$(basename "$script_path")")
     fi
     
+    log_info "Writing to crontab..."
     {
         echo "$current_crontab"
         echo "$cron_entry"
