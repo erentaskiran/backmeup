@@ -47,14 +47,17 @@ add(){
         return 1
     fi
     
+    script_path=$(cd "$(dirname "$script_path")" && pwd)/$(basename "$script_path")
+    
     if [[ ! -f "$script_path" ]]; then
         log_error "Script not found: $script_path"
         return 1
     fi
     
-    log_info "Starting to add cron job for script: $script_path"
+    chmod +x "$script_path"
+    
     local cron_schedule=$(convert_time_period_to_cron "$time_period")
-    local cron_entry="$cron_schedule $script_path # $(basename "$script_path")"
+    local cron_entry="$cron_schedule /usr/bin/env bash $script_path # $(basename "$script_path")"
     
     log_info "Adding cron job..."
     
