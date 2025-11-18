@@ -28,7 +28,6 @@ Usage: backmeup <command> [options]
 
 Commands:
   start [options]       Setup automated backup
-  cron <action>         Manage cron jobs (add/remove/list)
   help                  Show this help message
 
 Start Options:
@@ -47,20 +46,17 @@ EOF
 }
 
 handle_command(){
-    local command=$1
+    local cmd=$1
     shift
-    case $command in
-        "start")
-            exec bash "${SCRIPT_DIR}/backup.sh" $command "$@"
-            ;;
-        "cron")
-            exec bash "${SCRIPT_DIR}/cron.sh" "$@"
+    case $cmd in
+        "backup")
+            exec bash "${SCRIPT_DIR}/backup.sh" "$@"
             ;;
         "help"|"-h"|"--help")
             show_usage
             ;;
         *)
-            echo "Unknown command: $command"
+            echo "Unknown command: $cmd"
             echo "Use 'backmeup help' to see available commands."
             exit 1
             ;;
