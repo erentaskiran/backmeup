@@ -48,7 +48,12 @@ add(){
     fi
     
     log_info "Original script path: $script_path"
-    script_path=$(cd "$(dirname "$script_path")" 2>/dev/null && pwd)/$(basename "$script_path")
+    
+    if [[ "$script_path" = /* ]]; then
+        script_path="$script_path"
+    else
+        script_path=$(cd "$(dirname "$script_path")" 2>/dev/null && pwd)/$(basename "$script_path")
+    fi
     
     log_info "Resolved script path: $script_path"
     if [[ ! -f "$script_path" ]]; then
