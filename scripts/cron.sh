@@ -127,3 +127,34 @@ update(){
     remove "$script_path"
     add "$script_path" "$time_period"
 } 
+
+command(){
+    local command=$1
+    shift
+    case $command in
+        "add")
+            add "$@"
+            ;;
+        "remove")
+            remove "$@"
+            ;;
+        "update")
+            update "$@"
+            ;;
+        "help"|"--help"|"-h")
+            echo "Usage: cron.sh <command> [options]"
+            echo "Commands:"
+            echo "  add <script_path> <time_period>     Add a new cron job"
+            echo "  remove <script_path>                 Remove an existing cron job"
+            echo "  update <script_path> <time_period>   Update an existing cron job"
+            ;;
+        "")
+            echo "Error: No command specified"
+            ;;
+        *)
+            echo "Error: Unknown command '$command'"
+            ;;
+    esac
+}
+
+command "$@"
