@@ -115,6 +115,7 @@ setup_cron_job() {
         return 1
     fi
     
+    log_info "Setting up cron job for script: $script_path with schedule: $time_period\n"
     exec "${SCRIPT_DIR}/cron.sh" add "$script_path" "$time_period"
 }
 
