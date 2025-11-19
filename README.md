@@ -316,7 +316,7 @@ Example: `Documents_20241118_140523.tar.gz` or `Photos_20241118_140523.zip`
 
 - **OS**: Linux (Ubuntu, Debian, CentOS, etc.)
 - **Shell**: Bash 4.0+
-- **Tools**: tar, gzip, cron
+- **Tools**: tar, gzip, cron (optional: zip, bzip2, xz)
 - **Optional**: zip, bzip2, xz (for additional compression formats)
 - **Permissions**: Write access to source and destination directories
 

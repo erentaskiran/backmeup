@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+if [[ -z "${RED}" ]]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    BLUE='\033[0;34m'
+    NC='\033[0m'
+fi
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
+if ! declare -f log_info >/dev/null 2>&1; then
+    log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+    log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+    log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
+    log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_DIR="${HOME}/.config/backmeup"
 CONFIG_FILE="${CONFIG_DIR}/backups.conf"
 SCRIPT_PATH=""
+
+if [[ -f "${SCRIPT_DIR}/ssh_utils.sh" ]]; then
+    source "${SCRIPT_DIR}/ssh_utils.sh"
+fi
 
 init_config() {
     if [[ ! -d "${CONFIG_DIR}" ]]; then
@@ -33,10 +41,15 @@ save_backup_config() {
     local time_period="$5"
     local backup_count="$6"
     local compression_method="${7:-tar.gz}"
+    local remote_enabled="${8:-false}"
+    local remote_user="${9:-}"
+    local remote_host="${10:-}"
+    local remote_path="${11:-}"
+    local delete_after="${12:-false}"
     
     init_config
     
-    echo "${backup_name}|${source_dir}|${output_dir}|${script_path}|${time_period}|${backup_count}|${compression_method}" >> "${CONFIG_FILE}"
+    echo "${backup_name}|${source_dir}|${output_dir}|${script_path}|${time_period}|${backup_count}|${compression_method}|${remote_enabled}|${remote_user}|${remote_host}|${remote_path}|${delete_after}" >> "${CONFIG_FILE}"
 }
 
 get_backup_config() {
@@ -71,13 +84,19 @@ list_backups() {
     echo "=== Configured Backups ==="
     echo ""
     
-    while IFS='|' read -r name source output script schedule count compression; do
+    while IFS='|' read -r name source output script schedule count compression remote_enabled remote_user remote_host remote_path delete_after; do
         echo "Name:       $name"
         echo "Source:     $source"
         echo "Output:     $output"
         echo "Schedule:   $schedule"
         echo "Keep:       $count backups"
         echo "Format:     ${compression:-tar.gz}"
+        if [[ "$remote_enabled" == "true" ]]; then
+            echo "Remote:     ${remote_user}@${remote_host}:${remote_path} (scp)"
+            if [[ "$delete_after" == "true" ]]; then
+                echo "Option:     Delete local after transfer"
+            fi
+        fi
         echo "Script:     $script"
         echo "---"
     done < "${CONFIG_FILE}"
@@ -110,43 +129,50 @@ validate_directory() {
 check_compression_tool() {
     local compression="$1"
     local tool_name=""
-    local install_cmd=""
+    local package_name=""
     
     case "$compression" in
         "tar.gz")
             tool_name="gzip"
-            if ! command -v gzip &>/dev/null; then
-                install_cmd="sudo apt-get install gzip"
-            fi
+            package_name="gzip"
             ;;
         "tar.bz2")
             tool_name="bzip2"
-            if ! command -v bzip2 &>/dev/null; then
-                install_cmd="sudo apt-get install bzip2"
-            fi
+            package_name="bzip2"
             ;;
         "tar.xz")
             tool_name="xz"
-            if ! command -v xz &>/dev/null; then
-                install_cmd="sudo apt-get install xz-utils"
-            fi
+            package_name="xz-utils"
             ;;
         "zip")
             tool_name="zip"
-            if ! command -v zip &>/dev/null; then
-                install_cmd="sudo apt-get install zip"
-            fi
+            package_name="zip"
             ;;
     esac
     
-    if [[ -n "$install_cmd" ]]; then
+    if ! type "$tool_name" >/dev/null 2>&1; then
         log_warning "Compression tool '$tool_name' is not installed."
         echo ""
         read -p "Would you like to install it now? (y/n): " choice
-        if [[ "$choice" == "y" ]] || [[ "$choice" == "Y" ]]; then
+        if [[ "$choice" =~ ^[Yy]$ ]]; then
             log_info "Installing $tool_name..."
-            eval "$install_cmd"
+            
+            if command -v apt-get &>/dev/null; then
+                sudo apt-get update && sudo apt-get install -y "$package_name"
+            elif command -v yum &>/dev/null; then
+                sudo yum install -y "$package_name"
+            elif command -v dnf &>/dev/null; then
+                sudo dnf install -y "$package_name"
+            else
+                log_error "No supported package manager found. Please install '$tool_name' manually."
+                return 1
+            fi
+            
             if [[ $? -eq 0 ]]; then
+                if ! type "$tool_name" >/dev/null 2>&1; then
+                    log_error "Installation reported success but $tool_name is still not available"
+                    return 1
+                fi
                 log_success "$tool_name installed successfully"
             else
                 log_error "Failed to install $tool_name"
@@ -182,6 +208,11 @@ create_backup_script_template() {
     local backup_count="${4:-5}"
     local backup_name="${5:-$(basename "$source_dir")}"
     local compression_method="${6:-tar.gz}"
+    local remote_enabled="${7:-false}"
+    local remote_user="${8:-}"
+    local remote_host="${9:-}"
+    local remote_path="${10:-}"
+    local delete_after="${11:-false}"
     
     if [[ -z "$source_dir" ]]; then
         log_error "Source directory is required"
@@ -224,12 +255,8 @@ create_backup_script_template() {
     
     log_info "Creating backup script: $script_path"
     
-    local tool_cmd="tar"
-    if [[ "$compression_method" == "zip" ]]; then
-        tool_cmd="zip"
-    fi
-    
-    if ! check_and_install_tool "$tool_cmd"; then
+    if ! check_compression_tool "$compression_method"; then
+        log_error "Compression tool check failed - aborting"
         return 1
     fi
     
@@ -240,6 +267,11 @@ SOURCE="SOURCE_DIR_PLACEHOLDER"
 OUTPUT="OUTPUT_DIR_PLACEHOLDER"
 BACKUP_COUNT="BACKUP_COUNT_PLACEHOLDER"
 COMPRESSION="COMPRESSION_METHOD_PLACEHOLDER"
+REMOTE_ENABLED="REMOTE_ENABLED_PLACEHOLDER"
+REMOTE_USER="REMOTE_USER_PLACEHOLDER"
+REMOTE_HOST="REMOTE_HOST_PLACEHOLDER"
+REMOTE_PATH="REMOTE_PATH_PLACEHOLDER"
+DELETE_AFTER="DELETE_AFTER_PLACEHOLDER"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
 declare -A COMPRESSION_MAP=(
@@ -252,13 +284,16 @@ declare -A COMPRESSION_MAP=(
 IFS='|' read -r EXT FLAG <<< "${COMPRESSION_MAP[$COMPRESSION]:-".tar.gz|z"}"
 BACKUP_FILE="${OUTPUT}/$(basename "$SOURCE")_${TIMESTAMP}${EXT}"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting backup: $SOURCE"
+
+# Execute backup
 if [[ "$FLAG" == "zip" ]]; then
     cd "$(dirname "$SOURCE")" && zip -r "$BACKUP_FILE" "$(basename "$SOURCE")" >/dev/null
 else
     tar -c${FLAG}f "$BACKUP_FILE" -C "$(dirname "$SOURCE")" "$(basename "$SOURCE")" 2>/dev/null
 fi
+
 if [[ $? -eq 0 ]]; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ Backup completed: $(du -h "$BACKUP_FILE" | cut -f1)"  
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ Backup completed: $(du -h "$BACKUP_FILE" | cut -f1)"
     BACKUP_FILES=($(ls -t "${OUTPUT}"/$(basename "$SOURCE")_*${EXT} 2>/dev/null))
     if [[ ${#BACKUP_FILES[@]} -gt $BACKUP_COUNT ]]; then
         for ((i=$BACKUP_COUNT; i<${#BACKUP_FILES[@]}; i++)); do
@@ -270,15 +305,62 @@ else
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✗ Backup failed"
     exit 1
 fi
+
+# Remote Transfer
+if [[ "$REMOTE_ENABLED" == "true" ]]; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting remote transfer to ${REMOTE_HOST}..."
+    
+    scp -o BatchMode=yes "$BACKUP_FILE" "${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}"
+    
+    if [[ $? -eq 0 ]]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ Remote transfer successful"
+        
+        # Remote Rotation - cleanup old backups on remote server
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Checking remote backups for rotation..."
+        REMOTE_BASENAME=$(basename "$SOURCE")
+        
+        ssh -o BatchMode=yes "${REMOTE_USER}@${REMOTE_HOST}" bash -s <<REMOTE_SCRIPT
+cd "${REMOTE_PATH}" 2>/dev/null || exit 0
+echo "Searching for: ${REMOTE_BASENAME}_*${EXT}"
+BACKUP_FILES=(\$(ls -t ${REMOTE_BASENAME}_*${EXT} 2>/dev/null))
+COUNT=\${#BACKUP_FILES[@]}
+KEEP=${BACKUP_COUNT}
+
+echo "Found \$COUNT backups in ${REMOTE_PATH}"
+if [ \$COUNT -gt \$KEEP ]; then
+    echo "Keeping \$KEEP, removing \$((\$COUNT - \$KEEP))"
+    for ((i=\$KEEP; i<\$COUNT; i++)); do
+        rm -f "\${BACKUP_FILES[\$i]}"
+        echo "Removed: \${BACKUP_FILES[\$i]}"
+    done
+else
+    echo "No rotation needed (keeping \$KEEP)"
+fi
+REMOTE_SCRIPT
+        
+        if [[ "$DELETE_AFTER" == "true" ]]; then
+            rm -f "$BACKUP_FILE"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Removed local backup file"
+        fi
+    else
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✗ Remote transfer failed"
+        # Don't fail the whole script if remote transfer fails, but log it
+    fi
+fi
 TEMPLATE_EOF
 
     sed -i.bak "s|SOURCE_DIR_PLACEHOLDER|$source_dir|g" "$script_path"
     sed -i.bak "s|OUTPUT_DIR_PLACEHOLDER|$output_dir|g" "$script_path"
     sed -i.bak "s|BACKUP_COUNT_PLACEHOLDER|$backup_count|g" "$script_path"
     sed -i.bak "s|COMPRESSION_METHOD_PLACEHOLDER|$compression_method|g" "$script_path"
+    sed -i.bak "s|REMOTE_ENABLED_PLACEHOLDER|$remote_enabled|g" "$script_path"
+    sed -i.bak "s|REMOTE_USER_PLACEHOLDER|$remote_user|g" "$script_path"
+    sed -i.bak "s|REMOTE_HOST_PLACEHOLDER|$remote_host|g" "$script_path"
+    sed -i.bak "s|REMOTE_PATH_PLACEHOLDER|$remote_path|g" "$script_path"
+    sed -i.bak "s|DELETE_AFTER_PLACEHOLDER|$delete_after|g" "$script_path"
     rm -f "${script_path}.bak"
     chmod +x "$script_path"
-    save_backup_config "$backup_name" "$source_dir" "$output_dir" "$script_path" "$time_period" "$backup_count" "$compression_method"
+    save_backup_config "$backup_name" "$source_dir" "$output_dir" "$script_path" "$time_period" "$backup_count" "$compression_method" "$remote_enabled" "$remote_user" "$remote_host" "$remote_path" "$delete_after"
     log_success "Backup script created: $script_path"
     SCRIPT_PATH="$script_path"
 }
@@ -359,6 +441,11 @@ start_backup(){
     local time_period=""
     local backup_count="5"
     local compression_method="tar.gz"
+    local remote_enabled="false"
+    local remote_user=""
+    local remote_host=""
+    local remote_path=""
+    local delete_after="false"
     local interactive=false
     
     if [[ $# -eq 0 ]]; then
@@ -428,6 +515,44 @@ start_backup(){
         if [[ -z "$compression_method" ]] || [[ "$compression_method" == "tar.gz" ]]; then
             compression_method=$(select_compression_method)
         fi
+        
+        echo ""
+        read -p "Enable remote backup? [y/N]: " enable_remote
+        if [[ "$enable_remote" =~ ^[Yy]$ ]]; then
+            remote_enabled="true"
+            
+            if ! check_ssh_key; then
+                echo "No SSH key found. Generating one..."
+                generate_ssh_key
+            fi
+            
+            read -p "Remote User (e.g., root): " remote_user
+            read -p "Remote Host (e.g., 192.168.1.50): " remote_host
+            read -p "Remote Path (e.g., /var/backups): " remote_path
+            
+            while [[ -z "$remote_path" ]]; do
+                echo ""
+                log_warning "Remote path cannot be empty!"
+                read -p "Remote Path (e.g., /var/backups): " remote_path
+            done
+            
+            echo ""
+            echo "Testing connection..."
+            if ! test_ssh_connection "$remote_user" "$remote_host"; then
+                echo "Connection failed or password required."
+                read -p "Do you want to copy your SSH key to the server? [Y/n]: " copy_key
+                if [[ "$copy_key" =~ ^[Yy]$ ]] || [[ -z "$copy_key" ]]; then
+                    copy_ssh_key "$remote_user" "$remote_host"
+                fi
+            else
+                echo "Connection successful!"
+            fi
+            
+            read -p "Delete local backup after successful transfer? [y/N]: " del_choice
+            if [[ "$del_choice" =~ ^[Yy]$ ]]; then
+                delete_after="true"
+            fi
+        fi
     fi
     
     if [[ -z "$directory" ]] || [[ -z "$output_dir" ]] || [[ -z "$time_period" ]]; then
@@ -452,8 +577,10 @@ start_backup(){
         return 1
     fi
     
-    directory=$(expand_path "$directory")
-    output_dir=$(expand_path "$output_dir")
+    directory=$(expand_path "$directory" | sed 's:/*$::')
+    [[ -z "$directory" ]] && directory="/"
+    output_dir=$(expand_path "$output_dir" | sed 's:/*$::')
+    [[ -z "$output_dir" ]] && output_dir="/"
     
     if ! validate_directory "$directory" "Source directory"; then
         return 1
@@ -484,13 +611,15 @@ start_backup(){
     log_info "Destination: $output_dir"
     log_info "Schedule: $time_period"
     log_info "Compression: $compression_method"
+    if [[ "$remote_enabled" == "true" ]]; then
+        log_info "Remote: $remote_user@$remote_host:$remote_path (scp)"
+        if [[ "$delete_after" == "true" ]]; then
+            log_info "Option: Delete local after transfer"
+        fi
+    fi
     echo ""
     
-    if ! check_compression_tool "$compression_method"; then
-        return 1
-    fi
-    
-    create_backup_script_template "$directory" "$output_dir" "$time_period" "$backup_count" "$backup_name" "$compression_method"
+    create_backup_script_template "$directory" "$output_dir" "$time_period" "$backup_count" "$backup_name" "$compression_method" "$remote_enabled" "$remote_user" "$remote_host" "$remote_path" "$delete_after"
     
     if [[ $? -eq 0 ]] && [[ -n "$SCRIPT_PATH" ]]; then
         setup_cron_job "$SCRIPT_PATH" "$time_period"
@@ -505,6 +634,9 @@ start_backup(){
         echo " Destination:  $output_dir"
         echo " Schedule:     $time_period"
         echo " Format:       $compression_method"
+        if [[ "$remote_enabled" == "true" ]]; then
+            echo " Remote:       $remote_user@$remote_host:$remote_path"
+        fi
         echo " Script:       $SCRIPT_PATH"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
@@ -669,20 +801,55 @@ restore_backup() {
     fi
     
     local cmd=""
+    local compression_type=""
+    
     if [[ "$backup_file" =~ \.zip$ ]]; then
         cmd="unzip -o"
-        if ! check_and_install_tool "unzip"; then
-            return 1
-        fi
+        compression_type="zip"
     elif [[ "$backup_file" =~ \.tar\.gz$ ]] || [[ "$backup_file" =~ \.tgz$ ]]; then
         cmd="tar -xzf"
+        compression_type="tar.gz"
     elif [[ "$backup_file" =~ \.tar\.bz2$ ]]; then
         cmd="tar -xjf"
+        compression_type="tar.bz2"
     elif [[ "$backup_file" =~ \.tar\.xz$ ]]; then
         cmd="tar -xJf"
+        compression_type="tar.xz"
     else
         log_error "Unsupported backup file format. Supported: .tar.gz, .zip, .tar.bz2, .tar.xz"
         return 1
+    fi
+    
+    if ! check_compression_tool "$compression_type"; then
+        return 1
+    fi
+    
+    # Special check for unzip if it's a zip file
+    if [[ "$compression_type" == "zip" ]] && ! command -v unzip &>/dev/null; then
+        log_warning "unzip tool not found."
+        read -p "Would you like to install it now? (y/n): " choice
+        if [[ "$choice" == "y" ]] || [[ "$choice" == "Y" ]]; then
+            log_info "Installing unzip..."
+            if command -v apt-get &>/dev/null; then
+                sudo apt-get update && sudo apt-get install -y unzip
+            elif command -v yum &>/dev/null; then
+                sudo yum install -y unzip
+            elif command -v dnf &>/dev/null; then
+                sudo dnf install -y unzip
+            else
+                log_error "No supported package manager found. Please install 'unzip' manually."
+                return 1
+            fi
+            
+            if [[ $? -ne 0 ]]; then
+                log_error "Failed to install unzip"
+                return 1
+            fi
+            log_success "unzip installed successfully"
+        else
+            log_error "Cannot restore backup without unzip"
+            return 1
+        fi
     fi
     
     local backup_size=$(du -h "$backup_file" | cut -f1)
@@ -770,8 +937,10 @@ create_onetime_backup() {
         return 1
     fi
     
-    directory=$(expand_path "$directory")
-    output_dir=$(expand_path "$output_dir")
+    directory=$(expand_path "$directory" | sed 's:/*$::')
+    [[ -z "$directory" ]] && directory="/"
+    output_dir=$(expand_path "$output_dir" | sed 's:/*$::')
+    [[ -z "$output_dir" ]] && output_dir="/"
     
     if ! validate_directory "$directory" "Source directory"; then
         return 1
@@ -785,11 +954,7 @@ create_onetime_backup() {
         }
     fi
     
-    local tool_cmd="tar"
-    if [[ "$compression_method" == "zip" ]]; then
-        tool_cmd="zip"
-    fi
-    if ! check_and_install_tool "$tool_cmd"; then
+    if ! check_compression_tool "$compression_method"; then
         return 1
     fi
     
