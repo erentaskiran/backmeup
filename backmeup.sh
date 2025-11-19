@@ -10,7 +10,12 @@ print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts"
+# Determine script directory (works for both installed and local execution)
+if [[ -d "/usr/local/lib/backmeup" ]]; then
+    SCRIPT_DIR="/usr/local/lib/backmeup"
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts"
+fi
 
 show_usage() {
 cat << 'EOF'
@@ -27,13 +32,15 @@ BackMeUp - Automated Backup Solution
 Usage: backmeup <command> [options]
 
 Commands:
-  backup <start|update|delete|list|create|restore>  Manage backups
-  help                                              Show this help message
+  backup <start|update|delete|list>  Manage backups
+  uninstall                          Uninstall BackMeUp
+  help                               Show this help message
 
 "backup start" Options:
   -d, --directory <path>     Source directory to backup
   -o, --output <path>        Backup destination directory
   -t, --time-period <time>   Schedule (hourly/daily/weekly/monthly/cron)
+  -c, --compression <type>   Compression format (tar.gz/tar.bz2/tar.xz/zip)
   -b, --backup-count <num>   Number of backups to keep (default: 5)
   -i, --interactive          Interactive mode
 
@@ -41,8 +48,8 @@ Examples:
     backmeup backup start -i
     backmeup backup start -d ~/Documents -o ~/Backups -t daily
     backmeup backup start -d ~/Photos -o /backup -t "0 3 * * *" -b 10
-    backmeup backup create -d ~/Documents -o ~/Backups
-    backmeup backup restore -f ~/Backups/Documents_20231118_120000.tar.gz -o ~/Restored
+    backmeup backup list
+    backmeup uninstall
 EOF
 }
 
@@ -52,6 +59,16 @@ handle_command(){
     case $cmd in
         "backup")
             exec bash "${SCRIPT_DIR}/backup.sh" "$@"
+            ;;
+        "uninstall")
+            if [[ -f "/usr/local/lib/backmeup/uninstall.sh" ]]; then
+                exec bash "/usr/local/lib/backmeup/uninstall.sh"
+            elif [[ -f "${SCRIPT_DIR}/uninstall.sh" ]]; then
+                exec bash "${SCRIPT_DIR}/uninstall.sh"
+            else
+                print_error "Uninstaller not found"
+                exit 1
+            fi
             ;;
         "help"|"-h"|"--help")
             show_usage

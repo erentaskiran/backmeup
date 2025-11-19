@@ -107,30 +107,57 @@ validate_directory() {
     return 0
 }
 
-check_and_install_tool() {
-    local tool="$1"
+check_compression_tool() {
+    local compression="$1"
+    local tool_name=""
+    local install_cmd=""
     
-    if ! command -v "$tool" &> /dev/null; then
-        log_warning "Compression tool '$tool' not found."
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            if command -v brew &> /dev/null; then
-                read -p "Do you want to install '$tool' using Homebrew? [y/N] " response
-                if [[ "$response" =~ ^[Yy]$ ]]; then
-                    log_info "Installing $tool..."
-                    brew install "$tool"
-                else
-                    log_error "Tool '$tool' is required but not installed."
-                    return 1
-                fi
+    case "$compression" in
+        "tar.gz")
+            tool_name="gzip"
+            if ! command -v gzip &>/dev/null; then
+                install_cmd="sudo apt-get install gzip"
+            fi
+            ;;
+        "tar.bz2")
+            tool_name="bzip2"
+            if ! command -v bzip2 &>/dev/null; then
+                install_cmd="sudo apt-get install bzip2"
+            fi
+            ;;
+        "tar.xz")
+            tool_name="xz"
+            if ! command -v xz &>/dev/null; then
+                install_cmd="sudo apt-get install xz-utils"
+            fi
+            ;;
+        "zip")
+            tool_name="zip"
+            if ! command -v zip &>/dev/null; then
+                install_cmd="sudo apt-get install zip"
+            fi
+            ;;
+    esac
+    
+    if [[ -n "$install_cmd" ]]; then
+        log_warning "Compression tool '$tool_name' is not installed."
+        echo ""
+        read -p "Would you like to install it now? (y/n): " choice
+        if [[ "$choice" == "y" ]] || [[ "$choice" == "Y" ]]; then
+            log_info "Installing $tool_name..."
+            eval "$install_cmd"
+            if [[ $? -eq 0 ]]; then
+                log_success "$tool_name installed successfully"
             else
-                log_error "Homebrew not found. Please install '$tool' manually."
+                log_error "Failed to install $tool_name"
                 return 1
             fi
         else
-            log_error "Please install '$tool' manually."
+            log_error "Cannot create backup without $tool_name"
             return 1
         fi
     fi
+    
     return 0
 }
 
@@ -215,43 +242,23 @@ BACKUP_COUNT="BACKUP_COUNT_PLACEHOLDER"
 COMPRESSION="COMPRESSION_METHOD_PLACEHOLDER"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 
-# Determine extension and command
-case $COMPRESSION in
-    "zip")
-        EXT=".zip"
-        CMD="zip -r"
-        ;;
-    "tar.bz2")
-        EXT=".tar.bz2"
-        CMD="tar -cjf"
-        ;;
-    "tar.xz")
-        EXT=".tar.xz"
-        CMD="tar -cJf"
-        ;;
-    *)
-        EXT=".tar.gz"
-        CMD="tar -czf"
-        ;;
-esac
+declare -A COMPRESSION_MAP=(
+    ["tar.gz"]=".tar.gz|z"
+    ["tar.bz2"]=".tar.bz2|j"
+    ["tar.xz"]=".tar.xz|J"
+    ["zip"]=".zip|zip"
+)
 
+IFS='|' read -r EXT FLAG <<< "${COMPRESSION_MAP[$COMPRESSION]:-".tar.gz|z"}"
 BACKUP_FILE="${OUTPUT}/$(basename "$SOURCE")_${TIMESTAMP}${EXT}"
-
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting backup: $SOURCE"
-
-# Execute backup
-if [[ "$COMPRESSION" == "zip" ]]; then
-    # zip needs special handling for directory
-    cd "$(dirname "$SOURCE")" && $CMD "$BACKUP_FILE" "$(basename "$SOURCE")" >/dev/null
+if [[ "$FLAG" == "zip" ]]; then
+    cd "$(dirname "$SOURCE")" && zip -r "$BACKUP_FILE" "$(basename "$SOURCE")" >/dev/null
 else
-    $CMD "$BACKUP_FILE" -C "$(dirname "$SOURCE")" "$(basename "$SOURCE")" 2>/dev/null
+    tar -c${FLAG}f "$BACKUP_FILE" -C "$(dirname "$SOURCE")" "$(basename "$SOURCE")" 2>/dev/null
 fi
-
 if [[ $? -eq 0 ]]; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ Backup completed: $(du -h "$BACKUP_FILE" | cut -f1)"
-    
-    # Cleanup old backups
-    # Note: We need to be careful to only delete files with the same extension
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ Backup completed: $(du -h "$BACKUP_FILE" | cut -f1)"  
     BACKUP_FILES=($(ls -t "${OUTPUT}"/$(basename "$SOURCE")_*${EXT} 2>/dev/null))
     if [[ ${#BACKUP_FILES[@]} -gt $BACKUP_COUNT ]]; then
         for ((i=$BACKUP_COUNT; i<${#BACKUP_FILES[@]}; i++)); do
@@ -473,13 +480,15 @@ start_backup(){
     echo ""
     log_info "Starting backup setup..."
     log_info "Backup name: $backup_name"
-    log_info "Backup name: $backup_name"
     log_info "Source: $directory"
-    log_info "Destination: $output_dir"
     log_info "Destination: $output_dir"
     log_info "Schedule: $time_period"
     log_info "Compression: $compression_method"
     echo ""
+    
+    if ! check_compression_tool "$compression_method"; then
+        return 1
+    fi
     
     create_backup_script_template "$directory" "$output_dir" "$time_period" "$backup_count" "$backup_name" "$compression_method"
     
